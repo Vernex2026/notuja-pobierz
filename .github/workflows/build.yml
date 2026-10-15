@@ -144,14 +144,16 @@ jobs:
         run: |
           # Sekrety wpisane z Windowsa mają na końcu ukryty znak nowej linii (CR/LF) — usuwamy go.
           clean() { printf '%s' "$1" | tr -d '\r\n'; }
-          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEY_PASSWORD" ]; then
-            clean "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/notuja-release.jks"
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEY_PASSWORD" ] \
+             && clean "$ANDROID_KEYSTORE_BASE64" | tr -d ' ' | base64 --decode > "$RUNNER_TEMP/notuja-release.jks" 2>/dev/null \
+             && [ -s "$RUNNER_TEMP/notuja-release.jks" ]; then
             echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/notuja-release.jks" >> "$GITHUB_ENV"
             echo "ANDROID_KEYSTORE_PASSWORD=$(clean "$ANDROID_KEYSTORE_PASSWORD")" >> "$GITHUB_ENV"
             echo "ANDROID_KEY_PASSWORD=$(clean "$ANDROID_KEY_PASSWORD")" >> "$GITHUB_ENV"
             echo "ANDROID_KEY_ALIAS=$(clean "$ANDROID_KEY_ALIAS")" >> "$GITHUB_ENV"
             echo "signed=true" >> "$GITHUB_OUTPUT"
           else
+            echo "::warning::Brak (albo uszkodzony) klucz podpisu Androida — buduję wariant debug."
             echo "signed=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Zbuduj (podpisane)
