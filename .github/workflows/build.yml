@@ -1,0 +1,192 @@
+name: Zbuduj aplikacje Notuja
+
+# Publiczne repo = darmowe minuty Actions (w prywatnym repo konto wyczerpało limit).
+# Nowe wydanie: wypchnij tag v*  (np. git tag v0.1.2 && git push origin v0.1.2)
+# albo uruchom ręcznie: Actions → Zbuduj aplikacje Notuja → Run workflow (podaj numer wydania).
+# Pliki w wydaniu mają stałe nazwy, więc adresy .../releases/latest/download/<plik> zawsze wskazują najnowsze.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Numer wydania, np. v0.1.2 (powstanie wydanie GitHub z gotowymi plikami)"
+        required: true
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows (instalator)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci
+      # Bez certyfikatu instalator jest niepodpisany (Windows pokaże ostrzeżenie SmartScreen).
+      - name: Zbuduj instalator
+        run: npm run dist:win
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notuja-windows
+          path: desktop/dist/Notuja-Setup-*.exe
+          if-no-files-found: error
+
+  mac:
+    name: macOS (dmg)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Ikony
+        run: |
+          if [ -f build/make-icons.cjs ]; then node build/make-icons.cjs; fi
+      # Bez certyfikatu Apple powstaje paczka z podpisem ad-hoc (pierwsze uruchomienie: prawy przycisk → Otwórz).
+      - name: Zbuduj
+        run: npx electron-builder --mac --config electron-builder.config.cjs --publish never
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Zbierz pliki dmg
+        run: |
+          mkdir -p _mac-artifacts
+          find . -path ./node_modules -prune -o -path ./_mac-artifacts -prune -o -type f -name 'Notuja-*.dmg' -exec cp {} _mac-artifacts/ \;
+          ls -la _mac-artifacts
+          ls _mac-artifacts/*.dmg > /dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notuja-macos
+          path: desktop/_mac-artifacts/*.dmg
+          if-no-files-found: error
+
+  android:
+    name: Android (apk)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: mobile
+    env:
+      NOTUJA_VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - run: npm ci
+      - name: Capacitor sync
+        run: npx cap sync android
+      - name: Sprawdź wrapper Gradle
+        run: |
+          test -f android/gradle/wrapper/gradle-wrapper.jar || { echo "::error::Brak gradle-wrapper.jar"; exit 1; }
+          chmod +x android/gradlew
+      # Z kluczem podpisu (sekrety ANDROID_*) kolejne wersje instalują się jako aktualizacja poprzednich.
+      # Bez klucza powstaje wariant debug (każdy build ma wtedy inny podpis — przed instalacją trzeba odinstalować starą).
+      - name: Przygotuj podpis
+        id: signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEY_PASSWORD" ]; then
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/notuja-release.jks"
+            echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/notuja-release.jks" >> "$GITHUB_ENV"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Zbuduj (podpisane)
+        if: steps.signing.outputs.signed == 'true'
+        working-directory: mobile/android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon
+      - name: Zbuduj (debug)
+        if: steps.signing.outputs.signed != 'true'
+        working-directory: mobile/android
+        run: ./gradlew assembleDebug --no-daemon
+      - name: Zbierz apk
+        run: |
+          mkdir -p "$RUNNER_TEMP/apk"
+          if [ "${{ steps.signing.outputs.signed }}" = "true" ]; then
+            cp android/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/apk/Notuja.apk"
+          else
+            cp android/app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/apk/Notuja.apk"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notuja-android
+          path: ${{ runner.temp }}/apk/Notuja.apk
+          if-no-files-found: error
+      - name: Usuń klucz podpisu
+        if: always()
+        run: rm -f "$RUNNER_TEMP/notuja-release.jks"
+
+  release:
+    name: Wydanie GitHub
+    needs: [windows, mac, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: pliki
+      - name: Nazwy plików i wydanie
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p wydanie
+          cp pliki/notuja-windows/Notuja-Setup-*.exe wydanie/Notuja-Setup.exe
+          cp pliki/notuja-android/Notuja.apk wydanie/Notuja.apk
+          for f in pliki/notuja-macos/*.dmg; do
+            case "$f" in
+              *arm64*) cp "$f" wydanie/Notuja-mac-arm64.dmg ;;
+              *x64*)   cp "$f" wydanie/Notuja-mac-intel.dmg ;;
+              *)       cp "$f" "wydanie/$(basename "$f")" ;;
+            esac
+          done
+          ls -la wydanie
+          gh release create "$TAG" wydanie/* --repo "$REPO" --title "Notuja ${TAG#v}" --notes "Aplikacje ładują notuja.pl. Windows: instalator bez certyfikatu — przy ostrzeżeniu wybierz „Więcej informacji” → „Uruchom mimo to”. Mac: pierwsze uruchomienie przez prawy przycisk → Otwórz. Android: przed instalacją odinstaluj poprzednią wersję, jeśli to wariant debug." --latest

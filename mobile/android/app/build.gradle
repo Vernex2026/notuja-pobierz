@@ -1,0 +1,91 @@
+apply plugin: 'com.android.application'
+
+/*
+ * Podpisywanie wydania: dane ze zmiennych środowiskowych (CI) albo z właściwości Gradle
+ * (plik gradle.properties w katalogu domowym lub parametry -P). Gdy ich nie ma, build
+ * działa dalej - wydanie jest wtedy niepodpisane, a CI buduje wariant debug.
+ */
+def notujaProp = { String name ->
+    def value = System.getenv(name)
+    if (value == null || value.trim().isEmpty()) {
+        value = project.findProperty(name)
+    }
+    return (value == null || value.toString().trim().isEmpty()) ? null : value.toString().trim()
+}
+def notujaKeystoreFile = notujaProp('ANDROID_KEYSTORE_FILE')
+def notujaKeystorePassword = notujaProp('ANDROID_KEYSTORE_PASSWORD')
+def notujaKeyAlias = notujaProp('ANDROID_KEY_ALIAS')
+def notujaKeyPassword = notujaProp('ANDROID_KEY_PASSWORD')
+def notujaHasSigning = notujaKeystoreFile != null && notujaKeystorePassword != null &&
+        notujaKeyAlias != null && notujaKeyPassword != null && file(notujaKeystoreFile).exists()
+def notujaVersionCode = (notujaProp('NOTUJA_VERSION_CODE') ?: '1').toInteger()
+
+android {
+    namespace = "pl.notuja.app"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "pl.notuja.app"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode notujaVersionCode
+        versionName "0.1.1"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    signingConfigs {
+        release {
+            if (notujaHasSigning) {
+                storeFile file(notujaKeystoreFile)
+                storePassword notujaKeystorePassword
+                keyAlias notujaKeyAlias
+                keyPassword notujaKeyPassword
+            }
+        }
+    }
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+    buildTypes {
+        release {
+            if (notujaHasSigning) {
+                signingConfig signingConfigs.release
+            }
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

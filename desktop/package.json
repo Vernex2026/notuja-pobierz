@@ -1,0 +1,20 @@
+{
+  "name": "notuja-desktop",
+  "productName": "Notuja",
+  "version": "0.1.1",
+  "description": "Notuja - nagrywanie spotkan (dzwiek komputera + mikrofon) i notatki AI",
+  "author": "Notuja",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "selftest": "electron . --self-test",
+    "icons": "node build/make-icons.cjs",
+    "dist:win": "electron-builder --win --x64 --config electron-builder.config.cjs --publish never",
+    "dist:mac": "electron-builder --mac --config electron-builder.config.cjs --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.6.0",
+    "electron-builder": "26.15.3"
+  }
+}

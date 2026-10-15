@@ -1,0 +1,17 @@
+{
+  "name": "notuja-mobile",
+  "version": "0.1.1",
+  "private": true,
+  "description": "Notuja - powloka Android (Capacitor) z nagrywaniem w tle",
+  "scripts": {
+    "sync": "cap sync android",
+    "open": "cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.2",
+    "@capacitor/core": "8.5.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.2"
+  }
+}
