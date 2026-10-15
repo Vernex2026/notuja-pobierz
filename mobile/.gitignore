@@ -1,0 +1,30 @@
+# Zależności Node
+node_modules/
+
+# Wyniki budowania Androida
+android/build/
+android/app/build/
+android/.gradle/
+android/captures/
+android/.cxx/
+android/.externalNativeBuild/
+*.apk
+*.aab
+
+# Konfiguracja lokalna (ścieżka do SDK)
+android/local.properties
+
+# Android Studio
+android/.idea/
+*.iml
+
+# Klucze podpisu - nigdy do repozytorium
+*.jks
+*.keystore
+keystore.base64.txt
+
+# Wrapper Gradle MUSI być w repozytorium (potrzebny w CI)
+!android/gradle/wrapper/gradle-wrapper.jar
+!android/gradle/wrapper/gradle-wrapper.properties
+!android/gradlew
+!android/gradlew.bat

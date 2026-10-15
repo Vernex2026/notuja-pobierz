@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Notuja</string>
+    <string name="title_activity_main">Notuja</string>
+    <string name="package_name">pl.notuja.app</string>
+    <string name="custom_url_scheme">pl.notuja.app</string>
+    <string name="recording_channel_name">Nagrywanie</string>
+    <string name="recording_channel_description">Stałe powiadomienie widoczne, gdy Notuja nagrywa.</string>
+    <string name="recording_notification_title">Notuja nagrywa</string>
+    <string name="recording_notification_text">Dotknij, aby wrócić do nagrania.</string>
+</resources>

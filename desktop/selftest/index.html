@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <title>Notuja self-test</title>
+  </head>
+  <body>
+    <p>Notuja self-test</p>
+    <script>
+      // Wywoływane z procesu głównego przez executeJavaScript (bez prawdziwego kliknięcia).
+      async function runDisplay(measure) {
+        const out = { ok: false, audio: 0, video: 0, signal: null, error: null };
+        let stream;
+        try {
+          stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+          out.audio = stream.getAudioTracks().length;
+          out.video = stream.getVideoTracks().length;
+          out.ok = true;
+          if (measure && out.audio > 0) out.signal = await measureLoopback(stream);
+        } catch (err) {
+          out.error = (err && err.name ? err.name + ': ' : '') + (err && err.message ? err.message : String(err));
+        } finally {
+          if (stream) stream.getTracks().forEach((t) => t.stop());
+        }
+        return out;
+      }
+
+      // Gra bardzo cichy ton i sprawdza, czy wraca w przechwyconym dźwięku systemu.
+      async function measureLoopback(stream) {
+        const ctx = new AudioContext();
+        try {
+          await ctx.resume();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          gain.gain.value = 0.03;
+          osc.frequency.value = 440;
+          osc.connect(gain).connect(ctx.destination);
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 2048;
+          ctx.createMediaStreamSource(new MediaStream(stream.getAudioTracks())).connect(analyser);
+          osc.start();
+          const buf = new Float32Array(analyser.fftSize);
+          let peak = 0;
+          const end = performance.now() + 1200;
+          while (performance.now() < end) {
+            await new Promise((r) => setTimeout(r, 100));
+            analyser.getFloatTimeDomainData(buf);
+            for (const v of buf) peak = Math.max(peak, Math.abs(v));
+          }
+          osc.stop();
+          return peak > 0.0005;
+        } catch {
+          return null;
+        } finally {
+          ctx.close();
+        }
+      }
+
+      async function runMic() {
+        try {
+          const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const ok = s.getAudioTracks().length > 0;
+          s.getTracks().forEach((t) => t.stop());
+          return { ok, error: null };
+        } catch (err) {
+          return { ok: false, error: (err && err.name) || String(err) };
+        }
+      }
+
+      // Test nagrania (--capture-test): nagrywa dźwięk systemu do pliku (MediaRecorder, jak w aplikacji), dekoduje go
+      // i liczy dla każdej sekundy głośność oraz siłę wskazanych tonów. W tym czasie INNE programy grają te tony —
+      // jeśli są w nagraniu, to znaczy, że Notuja słyszy to, co leci z innych aplikacji.
+      async function runCapture(ms, freqs) {
+        const out = { ok: false, bytes: 0, seconds: [], error: null };
+        let stream;
+        try {
+          stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+          stream.getVideoTracks().forEach((t) => t.stop());
+          // Jak w aplikacji: dźwięk systemu idzie przez mikser (AudioContext → MediaStreamDestination), który trzyma
+          // ciągłą oś czasu także wtedy, gdy na komputerze nic nie gra.
+          const mix = new AudioContext();
+          await mix.resume();
+          const dest = mix.createMediaStreamDestination();
+          mix.createMediaStreamSource(new MediaStream(stream.getAudioTracks())).connect(dest);
+          const rec = new MediaRecorder(dest.stream, { mimeType: 'audio/webm;codecs=opus' });
+          const chunks = [];
+          rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+          rec.start(500);
+          await new Promise((r) => setTimeout(r, ms));
+          await new Promise((r) => {
+            rec.onstop = r;
+            rec.stop();
+          });
+          const blob = new Blob(chunks, { type: 'audio/webm' });
+          out.bytes = blob.size;
+          const ctx = new AudioContext();
+          const buf = await ctx.decodeAudioData(await blob.arrayBuffer());
+          const data = buf.getChannelData(0);
+          const sr = buf.sampleRate;
+          for (let s = 0; (s + 1) * sr <= data.length; s++) {
+            const win = data.subarray(s * sr, (s + 1) * sr);
+            let sum = 0;
+            for (const v of win) sum += v * v;
+            const total = sum || 1e-12;
+            const row = { s, rms: Math.round(Math.sqrt(sum / win.length) * 10000) / 10000 };
+            // Goertzel: jaka część energii tej sekundy siedzi w danym tonie.
+            for (const f of freqs) {
+              const w = (2 * Math.PI * f) / sr;
+              const c = 2 * Math.cos(w);
+              let s1 = 0;
+              let s2 = 0;
+              for (const v of win) {
+                const s0 = v + c * s1 - s2;
+                s2 = s1;
+                s1 = s0;
+              }
+              const power = (s1 * s1 + s2 * s2 - c * s1 * s2) / (win.length / 2);
+              row['f' + f] = Math.round(Math.min(1, power / total) * 100) / 100;
+            }
+            out.seconds.push(row);
+          }
+          ctx.close();
+          out.ok = true;
+        } catch (err) {
+          out.error = (err && err.name ? err.name + ': ' : '') + (err && err.message ? err.message : String(err));
+        } finally {
+          if (stream) stream.getTracks().forEach((t) => t.stop());
+        }
+        return out;
+      }
+
+      // Sprawdza most: zdarzenie DOM z głównego świata musi dotrzeć do onCommand.
+      function runBridge() {
+        const d = window.notujaDesktop;
+        if (!d || d.isDesktop !== true || typeof d.onCommand !== 'function') return Promise.resolve(false);
+        return new Promise((resolve) => {
+          const off = d.onCommand((cmd) => {
+            off();
+            resolve(cmd && cmd.type === 'record' && cmd.source === 'computer');
+          });
+          d.ready();
+          setTimeout(() => resolve(false), 3000);
+        });
+      }
+    </script>
+  </body>
+</html>

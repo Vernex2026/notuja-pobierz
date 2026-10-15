@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Notuja</title>
+    <style>
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 16px; padding: 24px; box-sizing: border-box; text-align: center;
+        background: #f5f4f1; color: #1c1c1e;
+        font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      h1 { font-size: 20px; margin: 0; }
+      p { margin: 0; color: #5b5b60; }
+      button {
+        border: 0; border-radius: 12px; padding: 12px 22px; min-height: 44px;
+        background: #2f52d6; color: #fff; font: inherit; font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Brak połączenia</h1>
+    <p>Sprawdź internet i spróbuj ponownie.</p>
+    <button type="button" id="retry">Spróbuj ponownie</button>
+    <script>
+      document.getElementById("retry").addEventListener("click", function () {
+        try {
+          if (window.notujaNative && window.notujaNative.reload) { window.notujaNative.reload(); return; }
+        } catch (e) {}
+        window.history.back();
+      });
+    </script>
+  </body>
+</html>
