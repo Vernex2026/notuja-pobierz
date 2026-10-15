@@ -66,15 +66,32 @@ jobs:
       - name: Ikony
         run: |
           if [ -f build/make-icons.cjs ]; then node build/make-icons.cjs; fi
-      # Bez certyfikatu Apple powstaje paczka z podpisem ad-hoc (pierwsze uruchomienie: prawy przycisk → Otwórz).
-      - name: Zbuduj
-        run: npx electron-builder --mac --config electron-builder.config.cjs --publish never
+      # Niezdefiniowany sekret to pusty napis, a electron-builder traktuje pusty CSC_LINK jak ścieżkę do pliku —
+      # dlatego eksportujemy tylko niepuste wartości. Bez certyfikatu Apple powstaje paczka z podpisem ad-hoc
+      # (pierwsze uruchomienie: prawy przycisk → Otwórz).
+      - name: Środowisko podpisu
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            value="${!name}"
+            if [ -n "$value" ]; then
+              {
+                echo "$name<<__NOTUJA_EOF__"
+                echo "$value"
+                echo "__NOTUJA_EOF__"
+              } >> "$GITHUB_ENV"
+              echo "$name: ustawiony"
+            else
+              echo "$name: brak"
+            fi
+          done
+      - name: Zbuduj
+        run: npx electron-builder --mac --config electron-builder.config.cjs --publish never
       - name: Zbierz pliki dmg
         run: |
           mkdir -p _mac-artifacts
@@ -125,9 +142,14 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
+          # Sekrety wpisane z Windowsa mają na końcu ukryty znak nowej linii (CR/LF) — usuwamy go.
+          clean() { printf '%s' "$1" | tr -d '\r\n'; }
           if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEY_PASSWORD" ]; then
-            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/notuja-release.jks"
+            clean "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/notuja-release.jks"
             echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/notuja-release.jks" >> "$GITHUB_ENV"
+            echo "ANDROID_KEYSTORE_PASSWORD=$(clean "$ANDROID_KEYSTORE_PASSWORD")" >> "$GITHUB_ENV"
+            echo "ANDROID_KEY_PASSWORD=$(clean "$ANDROID_KEY_PASSWORD")" >> "$GITHUB_ENV"
+            echo "ANDROID_KEY_ALIAS=$(clean "$ANDROID_KEY_ALIAS")" >> "$GITHUB_ENV"
             echo "signed=true" >> "$GITHUB_OUTPUT"
           else
             echo "signed=false" >> "$GITHUB_OUTPUT"
@@ -135,10 +157,6 @@ jobs:
       - name: Zbuduj (podpisane)
         if: steps.signing.outputs.signed == 'true'
         working-directory: mobile/android
-        env:
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: ./gradlew assembleRelease --no-daemon
       - name: Zbuduj (debug)
         if: steps.signing.outputs.signed != 'true'
